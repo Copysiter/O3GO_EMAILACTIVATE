@@ -1,0 +1,27 @@
+Options -Indexes
+DirectoryIndex index.php
+
+<Files "config.php">
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files "functions.php">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# Защита от XSS и других атак
+Header set X-XSS-Protection "1; mode=block"
+Header set X-Frame-Options "SAMEORIGIN"
+Header set X-Content-Type-Options "nosniff"
+Header set Referrer-Policy "strict-origin-when-cross-origin"
+Header set Content-Security-Policy "default-src 'self' https://cdn.jsdelivr.net https://unpkg.com https://cdn.quilljs.com; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.quilljs.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.quilljs.com;"
+
+# Защита от SQL-инъекций
+<FilesMatch "\.(php)$">
+    SetEnvIf Request_URI "union\s+select|information_schema|concat\s*\(|group_by|order\s+by" BadBot=1
+    Order Allow,Deny
+    Allow from all
+    Deny from env=BadBot
+</FilesMatch>

@@ -1,0 +1,39 @@
+services:
+
+  web:
+    build: .
+    ports:
+      - "8080:80"
+    depends_on:
+      - db
+
+  db:
+    image: mysql:8
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: QdXtAm1xmIzQyK2k
+      MYSQL_DATABASE: emailactivate
+      MYSQL_USER: o3go
+      MYSQL_PASSWORD: ZcPq1Uy1K2S7hbEe
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    restart: always
+    depends_on:
+      - db
+    environment:
+      PMA_HOST: db
+      PMA_USER: root
+      PMA_PASSWORD: QdXtAm1xmIzQyK2k
+      UPLOAD_LIMIT: 50M
+      PHP_UPLOAD_MAX_FILESIZE: 50M
+      PHP_POST_MAX_SIZE: 50M
+    ports:
+      - "8081:80"
+
+volumes:
+  mysql_data:
