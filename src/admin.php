@@ -36,7 +36,6 @@ function getDB() {
     }
 }
 
-
 // Функция для получения статистики
 function getStats($mysqli) {
     $stats = [
@@ -98,6 +97,27 @@ function getPagination($total, $per_page, $current_page) {
         'offset' => ($current_page - 1) * $per_page
     ];
 }
+// Функция для экспорта пользователей
+// Функция для экспорта пользователей
+function exportUsers($mysqli) {
+    $data = "email,assoc_password\n"; // Заголовок CSV
+    
+    $query = "SELECT u.email, u.assoc_password 
+              FROM users u 
+              INNER JOIN user_stats us ON u.id = us.user_id 
+              WHERE us.emails_downloaded > 0";
+    $result = $mysqli->query($query);
+    
+    while ($row = $result->fetch_assoc()) {
+        // Правильная обработка CSV
+        $email = str_replace('"', '""', $row['email']);
+        $password = str_replace('"', '""', $row['assoc_password']);
+        // Заключаем в кавычки для правильной обработки запятых
+        $data .= "\"{$email}\",\"{$password}\"\n";
+    }
+    
+    return $data;
+}
 
 // Проверка и очистка входных данных
 function sanitizeInput($data) {
@@ -114,48 +134,48 @@ if (!isset($_SESSION['admin_id'])) {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             checkLoginAttempts();
-            
+
             $username = sanitizeInput($_POST['username'] ?? '');
             $password = $_POST['password'] ?? '';
-            
+
             if (empty($username) || empty($password)) {
                 throw new Exception("Заполните все поля");
             }
-            
+
             $mysqli = getDB();
-            
+
             $stmt = $mysqli->prepare("SELECT id, password_hash, last_login FROM admins WHERE username = ? LIMIT 1");
             if (!$stmt) {
                 throw new Exception("Системная ошибка");
             }
-            
+
             $stmt->bind_param("s", $username);
             $stmt->execute();
             $result = $stmt->get_result();
-            
+
             if ($admin = $result->fetch_assoc()) {
                 if (password_verify($password, $admin['password_hash'])) {
                     $_SESSION['admin_id'] = $admin['id'];
                     $_SESSION['admin_last_login'] = $admin['last_login'];
-                    
+
                     // Обновляем время последнего входа
                     $stmt = $mysqli->prepare("UPDATE admins SET last_login = NOW() WHERE id = ?");
                     $stmt->bind_param("i", $admin['id']);
                     $stmt->execute();
-                    
+
                     header('Location: admin.php');
                     exit;
                 }
             }
-            
+
             $_SESSION['login_attempts']++;
             throw new Exception("Неверные учетные данные");
-            
+
         } catch (Exception $e) {
             $error = $e->getMessage();
         }
     }
-    
+
     // Генерируем CSRF токен
     if (!isset($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -184,21 +204,21 @@ if (!isset($_SESSION['admin_id'])) {
             <form method="POST" class="mt-8 space-y-6" autocomplete="off">
                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                 <div>
-                    <input name="username" type="text" required 
-                           class="w-full px-3 py-2 border rounded" 
+                    <input name="username" type="text" required
+                           class="w-full px-3 py-2 border rounded"
                            placeholder="Логин"
                            pattern="[a-zA-Z0-9]+"
                            title="Только буквы и цифры"
                            maxlength="50">
                 </div>
                 <div>
-                    <input name="password" type="password" required 
-                           class="w-full px-3 py-2 border rounded" 
+                    <input name="password" type="password" required
+                           class="w-full px-3 py-2 border rounded"
                            placeholder="Пароль"
                            maxlength="50">
                 </div>
                 <div>
-                    <button type="submit" 
+                    <button type="submit"
                             class="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
                         Войти
                     </button>
@@ -223,15 +243,15 @@ if (!isset($_SESSION['admin_id'])) {
 }
 
 
+
+//     // Выводим форму входа
+//     include('login.php');
+//     exit;
 try {
     $mysqli = getDB();
-    
-    // Параметры пагинации
-    $per_page = 50;
-    $current_page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 
-    // Обработка смены пароля администратора
     if (isset($_POST['change_admin_password'])) {
+        // Обработка смены пароля администратора
         if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
             throw new Exception('Недействительный токен безопасности');
         }
@@ -271,10 +291,51 @@ try {
         } else {
             throw new Exception('Ошибка при изменении пароля');
         }
-    }
+    } elseif (isset($_POST['edit_user'])) {
+        // Обработка редактирования пользователя
+        if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+            throw new Exception('Недействительный токен безопасности');
+        }
 
-    // Добавление одиночного пользователя
-    if (isset($_POST['add_user'])) {
+        $user_id = (int)$_POST['user_id'];
+        $email = filter_var($_POST['email'], FILTER_VALIDATE_EMAIL);
+        $imap_password = sanitizeInput($_POST['imap_password']);
+        $assoc_password = sanitizeInput($_POST['assoc_password']);
+
+        if (!$email) {
+            throw new Exception('Некорректный email');
+        }
+
+        if (strlen($imap_password) < 6 || strlen($assoc_password) < 6) {
+            throw new Exception('Пароли должны быть не менее 6 символов');
+        }
+
+        $stmt = $mysqli->prepare("UPDATE users SET email = ?, imap_password = ?, assoc_password = ? WHERE id = ?");
+        $stmt->bind_param("sssi", $email, $imap_password, $assoc_password, $user_id);
+        
+        if ($stmt->execute()) {
+            $success_message = 'Пользователь успешно обновлен';
+        } else {
+            throw new Exception('Ошибка при обновлении пользователя');
+        }
+    } elseif (isset($_POST['delete_user'])) {
+        // Обработка удаления пользователя
+        if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+            throw new Exception('Недействительный токен безопасности');
+        }
+
+        $user_id = (int)$_POST['user_id'];
+        
+        $stmt = $mysqli->prepare("DELETE FROM users WHERE id = ?");
+        $stmt->bind_param("i", $user_id);
+        
+        if ($stmt->execute()) {
+            $success_message = 'Пользователь успешно удален';
+        } else {
+            throw new Exception('Ошибка при удалении пользователя');
+        }
+    } if (isset($_POST['add_user'])) {
+        // Добавление одиночного пользователя
         if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
             throw new Exception('Недействительный токен безопасности');
         }
@@ -295,21 +356,12 @@ try {
         $stmt->bind_param("sss", $email, $imap_password, $assoc_password);
         
         if ($stmt->execute()) {
-            $admin_id = $_SESSION['admin_id'];
-            $log_stmt = $mysqli->prepare("INSERT INTO admin_logs (admin_id, action, ip_address, details) VALUES (?, 'add_user', ?, ?)");
-            $ip = $_SERVER['REMOTE_ADDR'];
-            $details = "Added user: $email";
-            $log_stmt->bind_param("iss", $admin_id, $ip, $details);
-            $log_stmt->execute();
-            
             $success_message = 'Пользователь успешно добавлен';
         } else {
             throw new Exception('Ошибка при добавлении пользователя');
         }
-    }
-
-    // Пакетное добавление пользователей
-    if (isset($_POST['bulk_add'])) {
+    } elseif (isset($_POST['bulk_add'])) {
+        // Пакетное добавление пользователей
         if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
             throw new Exception('Недействительный токен безопасности');
         }
@@ -326,13 +378,6 @@ try {
                 $stmt->bind_param("sss", $data[0], $data[1], $data[2]);
                 if ($stmt->execute()) {
                     $added++;
-                    // Логируем добавление
-                    $admin_id = $_SESSION['admin_id'];
-                    $log_stmt = $mysqli->prepare("INSERT INTO admin_logs (admin_id, action, ip_address, details) VALUES (?, 'add_user', ?, ?)");
-                    $ip = $_SERVER['REMOTE_ADDR'];
-                    $details = "Added user: {$data[0]}";
-                    $log_stmt->bind_param("iss", $admin_id, $ip, $details);
-                    $log_stmt->execute();
                 } else {
                     $errors[] = "Строка {$line_num}: Ошибка добавления";
                 }
@@ -349,126 +394,97 @@ try {
         } else {
             throw new Exception("Не удалось добавить пользователей. " . implode(", ", $errors));
         }
-    }
-
-
-    // Инициализация переменных
-    $total_users = 0;
-    $stats = [
-        'total_users' => 0,
-        'active_users' => 0,
-        'total_emails' => 0,
-        'domain_stats' => [],
-        'daily_stats' => []
-    ];
-    $users_result = null;
-    $search_query = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
-
-    // Проверка существования необходимых таблиц
-    $required_tables = [
-        'email_domain_stats' => "
-            CREATE TABLE IF NOT EXISTS `email_domain_stats` (
-                `id` int(11) NOT NULL AUTO_INCREMENT,
-                `domain` varchar(255) NOT NULL,
-                `email_count` int(11) NOT NULL DEFAULT 0,
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `domain` (`domain`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        ",
-        'daily_stats' => "
-            CREATE TABLE IF NOT EXISTS `daily_stats` (
-                `id` int(11) NOT NULL AUTO_INCREMENT,
-                `date` date NOT NULL,
-                `total_emails` int(11) NOT NULL DEFAULT 0,
-                `active_users` int(11) NOT NULL DEFAULT 0,
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `date` (`date`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        ",
-        'user_stats' => "
-            CREATE TABLE IF NOT EXISTS `user_stats` (
-                `id` int(11) NOT NULL AUTO_INCREMENT,
-                `user_id` int(11) NOT NULL,
-                `emails_downloaded` int(11) NOT NULL DEFAULT 0,
-                `last_activity` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `user_id` (`user_id`),
-                FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        "
-    ];
-
-    foreach ($required_tables as $table => $sql) {
-        $mysqli->query($sql);
-    }
-
-    // Получение статистики
-    $stats = getStats($mysqli);
-    
-    // Построение SQL запроса с учетом поиска
-    $where_clause = "";
-    $search_params = [];
-    if (!empty($search_query)) {
-        $where_clause = "WHERE email LIKE ?";
-        $search_params[] = "%{$search_query}%";
-    }
-
-    // Получение общего количества пользователей
-    try {
-        if (empty($search_params)) {
-            $result = $mysqli->query("SELECT COUNT(*) as count FROM users {$where_clause}");
-        } else {
-            $stmt = $mysqli->prepare("SELECT COUNT(*) as count FROM users {$where_clause}");
-            $stmt->bind_param(str_repeat('s', count($search_params)), ...$search_params);
-            $stmt->execute();
-            $result = $stmt->get_result();
+    } elseif (isset($_POST['export_users'])) {
+        // Обработка экспорта
+        if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+            throw new Exception('Недействительный токен безопасности');
         }
-        if ($result) {
-            $total_users = (int)$result->fetch_assoc()['count'];
-        }
-    } catch (Exception $e) {
-        error_log("Error getting total users: " . $e->getMessage());
-    }
 
-    // Настройка пагинации
-    $pagination = getPagination($total_users, $per_page, $current_page);
-    
-    // Получение списка пользователей с пагинацией
-    try {
-        $query = "SELECT u.*, us.emails_downloaded, us.last_activity 
-                 FROM users u 
-                 LEFT JOIN user_stats us ON u.id = us.user_id 
-                 {$where_clause} 
-                 ORDER BY u.email 
-                 LIMIT ? OFFSET ?";
-                 
-        $stmt = $mysqli->prepare($query);
-        
-        if (!empty($search_params)) {
-            $types = str_repeat('s', count($search_params)) . 'ii';
-            $params = array_merge($search_params, [$per_page, $pagination['offset']]);
-            $stmt->bind_param($types, ...$params);
-        } else {
-            $stmt->bind_param("ii", $per_page, $pagination['offset']);
-        }
-        
-        $stmt->execute();
-        $users_result = $stmt->get_result();
-        
-    } catch (Exception $e) {
-        error_log("Error getting users list: " . $e->getMessage());
-        $users_result = null;
-    }
+        $csvData = exportUsers($mysqli);
 
-    // Генерация нового CSRF токена
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        // Устанавливаем заголовки для скачивания файла
+        header('Pragma: public');
+        header('Expires: 0');
+        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename=users_export_' . date('Y-m-d') . '.csv');
+
+        // Выводим данные
+        echo $csvData;
+    }
 
 } catch (Exception $e) {
     $error = $e->getMessage();
     error_log("Admin error: " . $error);
 }
 
+// Параметры пагинации
+$per_page = 50;
+$current_page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 
+// Инициализация переменных
+$total_users = 0;
+$stats = getStats($mysqli);
+$users_result = null;
+$search_query = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
+
+// Построение SQL запроса с учетом поиска
+$where_clause = "";
+$search_params = [];
+if (!empty($search_query)) {
+    $where_clause = "WHERE email LIKE ?";
+    $search_params[] = "%{$search_query}%";
+}
+
+// Получение общего количества пользователей
+try {
+    if (empty($search_params)) {
+        $result = $mysqli->query("SELECT COUNT(*) as count FROM users {$where_clause}");
+    } else {
+        $stmt = $mysqli->prepare("SELECT COUNT(*) as count FROM users {$where_clause}");
+        $stmt->bind_param(str_repeat('s', count($search_params)), ...$search_params);
+        $stmt->execute();
+        $result = $stmt->get_result();
+    }
+    if ($result) {
+        $total_users = (int)$result->fetch_assoc()['count'];
+    }
+} catch (Exception $e) {
+    error_log("Error getting total users: " . $e->getMessage());
+}
+
+// Настройка пагинации
+$pagination = getPagination($total_users, $per_page, $current_page);
+
+// Получение списка пользователей с пагинацией
+try {
+    $query = "SELECT u.*, us.emails_downloaded, us.last_activity
+             FROM users u
+             LEFT JOIN user_stats us ON u.id = us.user_id
+             {$where_clause}
+             ORDER BY u.email
+             LIMIT ? OFFSET ?";
+
+    $stmt = $mysqli->prepare($query);
+
+    if (!empty($search_params)) {
+        $types = str_repeat('s', count($search_params)) . 'ii';
+        $params = array_merge($search_params, [$per_page, $pagination['offset']]);
+        $stmt->bind_param($types, ...$params);
+    } else {
+        $stmt->bind_param("ii", $per_page, $pagination['offset']);
+    }
+
+    $stmt->execute();
+    $users_result = $stmt->get_result();
+
+} catch (Exception $e) {
+    error_log("Error getting users list: " . $e->getMessage());
+    $users_result = null;
+}
+
+// Генерация нового CSRF токена
+$_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 ?>
 <!DOCTYPE html>
 <html>
@@ -491,13 +507,21 @@ try {
                             <h1 class="text-2xl font-bold text-gray-900">Админ-панель</h1>
                         </div>
                     </div>
-                    <div class="flex items-center">
-                        <span class="text-gray-600 mr-4">
+                    <div class="flex items-center space-x-4">
+                        <!-- Кнопка экспорта -->
+                        <form method="POST" class="inline">
+                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                            <button type="submit" name="export_users"
+                                    class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
+                                Выгрузить почты
+                            </button>
+                        </form>
+                        <span class="text-gray-600">
                             Последний вход: 
                             <?php echo date('d.m.Y H:i', strtotime($_SESSION['admin_last_login'] ?? 'now')); ?>
                         </span>
                         <button id="showChangePasswordModal" 
-                                class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2">
+                                class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
                             Сменить пароль
                         </button>
                         <a href="logout.php" 
@@ -561,8 +585,7 @@ try {
                     </div>
                 </div>
             </div>
-
-            <!-- Графики -->
+			<!-- Графики -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
                 <!-- График активности -->
                 <div class="bg-white p-6 rounded-lg shadow">
@@ -576,7 +599,6 @@ try {
                     <canvas id="domainChart"></canvas>
                 </div>
             </div>
-
 
             <!-- Блок форм управления пользователями -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
@@ -659,9 +681,7 @@ try {
                     </form>
                 </div>
             </div>
-
-
-            <!-- Таблица пользователей -->
+			<!-- Таблица пользователей -->
             <div class="bg-white rounded-lg shadow">
                 <div class="px-6 py-4 border-b border-gray-200">
                     <h2 class="text-xl font-bold">
@@ -744,8 +764,7 @@ try {
                         </tbody>
                     </table>
                 </div>
-
-                <!-- Пагинация -->
+				<!-- Пагинация -->
                 <?php if ($pagination['total_pages'] > 1): ?>
                     <div class="px-6 py-4 bg-gray-50 border-t border-gray-200">
                         <div class="flex justify-center space-x-2">
@@ -799,7 +818,7 @@ try {
         </div>
     </div>
 
-
+    <!-- Модальные окна -->
     <!-- Модальное окно смены пароля администратора -->
     <div id="changePasswordModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden">
         <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
@@ -839,8 +858,7 @@ try {
             </div>
         </div>
     </div>
-
-    <!-- Модальное окно для редактирования пользователя -->
+	<!-- Модальное окно для редактирования пользователя -->
     <div id="editModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden">
         <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
             <div class="mt-3">
@@ -929,8 +947,7 @@ try {
             }
         }
     });
-
-    // Функции для модальных окон
+	// Функции для модальных окон
     function openModal(modalId) {
         document.getElementById(modalId).classList.remove('hidden');
         document.body.style.overflow = 'hidden';

@@ -19,7 +19,7 @@ try {
     }
     $mysqli->set_charset('utf8mb4');
 
-    $stmt = $mysqli->prepare("SELECT email FROM users ORDER BY RAND() LIMIT 1");
+    $stmt = $mysqli->prepare("SELECT email, assoc_password FROM users ORDER BY RAND() LIMIT 1");
     $stmt->execute();
     $user = $stmt->get_result()->fetch_assoc();
 
@@ -29,7 +29,8 @@ try {
 
     echo json_encode([
         'success' => true,
-        'email' => $user['email']
+        'email' => $user['email'],
+        'password' => $user['assoc_password']
     ], JSON_UNESCAPED_UNICODE);
 
 } catch (Exception $e) {
